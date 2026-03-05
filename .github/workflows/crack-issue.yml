@@ -32,17 +32,11 @@ jobs:
             });
 
       # ── 1. Parse issue body ───────────────────────────────────────────────
-      # The first non-empty, non-flag line is treated as the password.
-      # Subsequent lines may contain optional flags:
-      #   --hash=<sha512crypt|sha256crypt|md5crypt>
-      #   --time=<seconds, 10-120>
-      #   --mode=<auto|wordlist|incremental|single>
       - name: Parse options and mask password
         id: opts
         env:
           BODY: ${{ github.event.issue.body }}
         run: |
-          # Extract password: first non-blank, non-flag line, max 256 chars
           PASSWORD=$(printf '%s' "$BODY" \
             | grep -v '^[[:space:]]*--' \
             | grep -v '^[[:space:]]*$' \
@@ -50,31 +44,20 @@ jobs:
             | tr -d '\r\n' \
             | cut -c1-256)
 
-          # Mask in all subsequent log output
           echo "::add-mask::$PASSWORD"
-
-          # Store safely to file (avoids shell-expansion risk in later steps)
           printf '%s' "$PASSWORD" > /tmp/password.txt
 
-          # Parse optional flags — values are validated by the case statements below,
-          # so injected characters in the raw flag values are harmless.
           HASH=$(printf '%s' "$BODY" | grep -oP '(?<=--hash=)\S+' | head -1 || true)
           TLIM=$(printf '%s' "$BODY" | grep -oP '(?<=--time=)\d+'  | head -1 || true)
           MODE=$(printf '%s' "$BODY" | grep -oP '(?<=--mode=)\S+' | head -1 || true)
 
-          # Defaults
           [ -z "$HASH" ] && HASH="sha512crypt"
           [ -z "$TLIM" ] && TLIM="30"
           [ -z "$MODE" ] && MODE="auto"
 
-          # Clamp time limit: 10 – 120 seconds
           if [ "$TLIM" -lt 10 ] 2>/dev/null; then TLIM=10; fi
           if [ "$TLIM" -gt 120 ] 2>/dev/null; then TLIM=120; fi
 
-          # Map user-facing hash name to john format + openssl passwd option
-          # Ubuntu's packaged john (1.9.0, non-jumbo) uses "crypt" as the
-          # unified format name for all Linux shadow-password hash types
-          # (sha512crypt/$6$, sha256crypt/$5$, md5crypt/$1$).
           case "$HASH" in
             sha512|sha512crypt) JOHN_FMT="crypt"; SSL_OPT="-6" ;;
             sha256|sha256crypt) JOHN_FMT="crypt"; SSL_OPT="-5" ;;
@@ -86,7 +69,6 @@ jobs:
               ;;
           esac
 
-          # Validate mode
           case "$MODE" in
             auto|wordlist|incremental|single) ;;
             *) MODE="auto" ;;
@@ -98,7 +80,6 @@ jobs:
           echo "time=$TLIM"         >> "$GITHUB_OUTPUT"
           echo "mode=$MODE"         >> "$GITHUB_OUTPUT"
 
-          # Guard against empty password
           if [ -z "$PASSWORD" ]; then
             echo "empty=true" >> "$GITHUB_OUTPUT"
           else
@@ -141,12 +122,12 @@ jobs:
         if: steps.opts.outputs.empty == 'true'
         run: exit 0
 
-      # ── 3. Analyse password complexity ───────────────────────────────────
-      - name: Analyse password complexity
+      # ── 3. Analyse password complexity and security ───────────────────────
+      - name: Analyse password complexity and security
         id: stats
         run: |
           python3 - << 'PYEOF'
-          import re, math, os
+          import re, math, os, json
 
           with open('/tmp/password.txt') as f:
               p = f.read()
@@ -157,35 +138,288 @@ jobs:
           di = bool(re.search(r'\d',    p))
           sp = bool(re.search(r'[^A-Za-z0-9]', p))
 
+          lo_count = len(re.findall(r'[a-z]', p))
+          up_count = len(re.findall(r'[A-Z]', p))
+          di_count = len(re.findall(r'\d', p))
+          sp_count = len(re.findall(r'[^A-Za-z0-9]', p))
+
           pool = (26 * lo) + (26 * up) + (10 * di) + (33 * sp)
           ent  = round(n * math.log2(max(pool, 1)), 1)
 
-          if   ent < 28:  grade = "Very Weak"
-          elif ent < 36:  grade = "Weak"
-          elif ent < 60:  grade = "Moderate"
-          elif ent < 128: grade = "Strong"
-          else:           grade = "Very Strong"
+          # Entropy-only grade (for explanation; NOT the final verdict alone)
+          if   ent < 28:  ent_grade = "Very Weak"
+          elif ent < 36:  ent_grade = "Weak"
+          elif ent < 60:  ent_grade = "Moderate"
+          elif ent < 128: ent_grade = "Strong"
+          else:           ent_grade = "Very Strong"
 
+          # ── Comprehensive insecurity checks ─────────────────────────────
+          issues = []
+
+          # 1. Length checks
+          if n < 8:
+              issues.append(("Password is too short — under 8 characters. Minimum recommended length is 12.", "critical"))
+          elif n < 12:
+              issues.append(("Password length is below the recommended 12 characters.", "high"))
+
+          # 2. Known common / bad passwords
+          COMMON_PASSWORDS = {
+              "password", "password1", "password12", "password123", "password1234",
+              "password1!", "password1!!", "password!", "passw0rd", "p@ssword",
+              "p@ssw0rd", "p@$$word", "pa$$w0rd", "p4ssword", "p4ssw0rd",
+              "123456", "1234567", "12345678", "123456789", "1234567890",
+              "12345", "1234", "123", "111111", "222222", "333333", "444444",
+              "555555", "666666", "777777", "888888", "999999", "000000",
+              "11111111", "00000000", "12121212", "1234512345",
+              "qwerty", "qwerty1", "qwerty12", "qwerty123", "qwerty!",
+              "qwertyuiop", "asdfgh", "asdfghjkl", "zxcvbn", "zxcvbnm",
+              "1q2w3e", "1q2w3e4r", "1q2w3e4r5t", "qazwsx", "qazwsxedc",
+              "qwerasdf", "asdfzxcv",
+              "abc123", "abc1234", "abcdef", "abcd1234",
+              "letmein", "letmein1", "letmein!", "letmein123",
+              "monkey", "monkey1", "monkey123", "monkey!",
+              "dragon", "dragon1", "dragon123",
+              "baseball", "football", "soccer", "hockey", "basketball",
+              "sunshine", "sunshine1", "sunshine123",
+              "master", "master1", "master123",
+              "hello", "hello123", "hello1", "hello!",
+              "welcome", "welcome1", "welcome123",
+              "shadow", "shadow1", "shadow123",
+              "superman", "superman1", "superman123",
+              "batman", "batman1", "batman123",
+              "iloveyou", "iloveyou1", "iloveyou!",
+              "trustno1", "trustno1!",
+              "admin", "admin123", "admin1", "admin!", "administrator",
+              "login", "login1", "login123",
+              "princess", "princess1", "princess123",
+              "starwars", "starwars1",
+              "ninja", "ninja1", "ninja123",
+              "pepper", "pepper1", "pepper123",
+              "mustang", "mustang1",
+              "flower", "flower1", "flower123",
+              "michael", "michael1", "jessica", "jennifer",
+              "charlie", "charlie1", "charlie123",
+              "donald", "donald1", "thomas", "thomas1",
+              "google", "google1", "apple1", "facebook",
+              "matrix", "matrix1", "avatar", "avatar1",
+              "hunter", "hunter1", "hunter2",
+              "secret", "secret1", "secret123",
+              "changeme", "changeme1", "changeme!",
+              "temp", "temp123", "temp1234", "test", "test123", "test1234",
+              "pass", "pass1", "pass123", "pass1234",
+              "access", "access1", "access123",
+              "maggie", "maggie1", "michael123",
+              "summer", "summer1", "summer123",
+              "winter", "winter1", "winter123",
+              "spring", "spring1",
+              "cheese", "cheese1", "cheese123",
+              "butter", "butter1",
+              "cookie", "cookie1", "cookie123",
+              "coffee", "coffee1",
+              "hockey1", "hockey123",
+              "soccer1", "soccer123",
+              "1password", "mypassword", "mypassword1",
+          }
+
+          p_lower = p.lower()
+          p_stripped = p_lower.rstrip('0123456789!@#$%^&*_-.')
+
+          if p_lower in COMMON_PASSWORDS:
+              issues.append((
+                  "Password is in the top common-passwords list — a cracker tries these first and will find it instantly.",
+                  "critical"
+              ))
+          elif p_stripped in COMMON_PASSWORDS:
+              issues.append((
+                  "Password is a common word/phrase with only a simple numeric or symbol suffix — still instantly guessable.",
+                  "critical"
+              ))
+
+          # 3. Leet-speak normalisation + dictionary-word check
+          LEET_MAP = {'@': 'a', '3': 'e', '1': 'i', '0': 'o', '5': 's',
+                      '7': 't', '$': 's', '!': 'i', '4': 'a', '8': 'b',
+                      '6': 'g', '9': 'g', '+': 't'}
+
+          def normalize_leet(s):
+              return ''.join(LEET_MAP.get(c, c) for c in s.lower())
+
+          normalized = normalize_leet(p)
+
+          DICTIONARY_WORDS = [
+              "password", "passw0rd", "admin", "administrator",
+              "monkey", "dragon", "master", "hello", "welcome",
+              "sunshine", "shadow", "superman", "batman",
+              "football", "baseball", "soccer", "hockey", "basketball",
+              "letmein", "trustno", "iloveyou", "princess", "starwars",
+              "qwerty", "keyboard", "computer", "internet",
+              "login", "access", "secret", "hunter", "ninja",
+              "summer", "winter", "spring", "autumn", "flower",
+              "january", "february", "march", "april", "june",
+              "july", "august", "september", "october", "november", "december",
+              "monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday",
+              "chocolate", "michael", "jessica", "jennifer", "charlie",
+              "thomas", "andrew", "robert", "william", "joseph", "donald",
+              "superman", "batman", "pokemon", "nintendo",
+              "google", "apple", "microsoft", "amazon", "facebook",
+              "liverpool", "chelsea", "arsenal", "manchester",
+              "maggie", "mustang", "pepper", "cheese", "butter", "coffee",
+              "matrix", "avatar", "pirate",
+              "cookie", "penguin", "silver", "golden", "purple",
+              "test", "temp", "pass", "change", "default",
+          ]
+
+          already_flagged = any(
+              msg.startswith("Password is in the top") or msg.startswith("Password is a common")
+              for msg, _ in issues
+          )
+
+          leet_word_found = None
+          dict_word_found = None
+          if not already_flagged:
+              for word in DICTIONARY_WORDS:
+                  if word in p_lower and dict_word_found is None:
+                      dict_word_found = word
+                  if word in normalized and word not in p_lower and leet_word_found is None:
+                      leet_word_found = word
+
+          if dict_word_found:
+              issues.append((
+                  f'Contains a common dictionary word: "{dict_word_found}". Dictionary-based attacks will find this quickly.',
+                  "high"
+              ))
+          if leet_word_found:
+              issues.append((
+                  f'Uses leet-speak substitution of the word "{leet_word_found}" (e.g. @ for a, 0 for o). Modern crackers normalise these automatically.',
+                  "high"
+              ))
+
+          # 4. Keyboard walk detection
+          KEYBOARD_WALKS = [
+              "qwerty", "qwert", "werty", "erty", "rtyui",
+              "asdfg", "asdf", "sdfg", "dfgh",
+              "zxcvb", "zxcv", "xcvb",
+              "qweasd", "asdzxc", "qazwsx",
+              "1qaz", "2wsx", "3edc", "4rfv", "5tgb", "6yhn",
+              "1q2w3e", "1q2w", "2w3e", "3e4r",
+              "poiuy", "lkjhg", "mnbvc",
+          ]
+          for walk in KEYBOARD_WALKS:
+              if walk in p_lower:
+                  issues.append((
+                      f'Contains a keyboard-walk pattern: "{walk}". These sequences are well-known to crackers.',
+                      "high"
+                  ))
+                  break
+
+          # 5. Repeated-character detection
+          if re.search(r'(.)\1{3,}', p):
+              issues.append(("Contains 4 or more identical consecutive characters (e.g. aaaa, 1111). Repetition drastically reduces real entropy.", "high"))
+          elif re.search(r'(.)\1{2,}', p):
+              issues.append(("Contains 3 identical consecutive characters (e.g. aaa, 111). Avoid repetition.", "medium"))
+
+          # 6. Sequential-character patterns
+          SEQUENCES = [
+              "123456789", "12345678", "1234567", "123456", "12345", "1234",
+              "234567", "345678", "456789", "567890",
+              "987654321", "87654321", "7654321", "654321",
+              "abcdefgh", "abcdefg", "abcdef", "abcde", "abcd",
+              "hgfedcba", "gfedcba", "fedcba",
+          ]
+          for seq in SEQUENCES:
+              if seq in p_lower:
+                  issues.append((
+                      f'Contains a sequential pattern: "{seq}". Sequential characters are among the first guessed by brute-force tools.',
+                      "high"
+                  ))
+                  break
+
+          # 7. Year / date patterns
+          if re.search(r'(19|20)\d{2}', p):
+              issues.append(("Contains a 4-digit year (e.g. 1990, 2023). Years are commonly appended and guessed early.", "medium"))
+          if re.search(r'(0[1-9]|1[0-2])(0[1-9]|[12]\d|3[01])', p):
+              issues.append(("Contains what appears to be a date pattern (MMDD or DDMM). Avoid personally meaningful dates.", "medium"))
+
+          # 8. All-numeric password
+          if p.isdigit():
+              issues.append(("Password consists entirely of digits — extremely vulnerable to brute force.", "critical"))
+
+          # 9. Missing character classes
+          if not up:
+              issues.append(("No uppercase letters (A–Z). Adding uppercase expands the character pool significantly.", "medium"))
+          if not sp:
+              issues.append(("No special characters (!@#$…). Special characters significantly increase complexity.", "medium"))
+          if not di:
+              issues.append(("No digits (0–9). Adding numbers increases the character pool.", "low"))
+
+          # 10. Word+number predictable pattern
+          if re.search(r'^[A-Za-z@$!]+\d{1,4}[!@#$%]?$', p) and n < 16:
+              issues.append(("Follows the predictable word + short-number (+ optional symbol) pattern — one of the most commonly guessed structures.", "medium"))
+
+          # ── Determine overall security grade ──────────────────────────────
+          critical_count = sum(1 for _, s in issues if s == "critical")
+          high_count     = sum(1 for _, s in issues if s == "high")
+          medium_count   = sum(1 for _, s in issues if s == "medium")
+          low_count      = sum(1 for _, s in issues if s == "low")
+
+          if critical_count > 0:
+              pattern_grade = "Very Weak"
+          elif high_count >= 1:
+              pattern_grade = "Weak"
+          elif medium_count >= 3:
+              pattern_grade = "Moderate"
+          elif medium_count >= 1 or low_count >= 2:
+              pattern_grade = "Moderate"
+          else:
+              pattern_grade = ent_grade
+
+          GRADE_RANK = {"Very Weak": 0, "Weak": 1, "Moderate": 2, "Strong": 3, "Very Strong": 4}
+          final_grade = min([ent_grade, pattern_grade], key=lambda g: GRADE_RANK[g])
+
+          # ── Write outputs ────────────────────────────────────────────────
           with open(os.environ['GITHUB_OUTPUT'], 'a') as out:
               out.write(f"len={n}\n")
               out.write(f"lo={'t' if lo else 'f'}\n")
               out.write(f"up={'t' if up else 'f'}\n")
               out.write(f"di={'t' if di else 'f'}\n")
               out.write(f"sp={'t' if sp else 'f'}\n")
+              out.write(f"lo_count={lo_count}\n")
+              out.write(f"up_count={up_count}\n")
+              out.write(f"di_count={di_count}\n")
+              out.write(f"sp_count={sp_count}\n")
               out.write(f"pool={pool}\n")
               out.write(f"ent={ent}\n")
-              out.write(f"grade={grade}\n")
+              out.write(f"ent_grade={ent_grade}\n")
+              out.write(f"grade={final_grade}\n")
+              out.write(f"issue_count={len(issues)}\n")
+              out.write(f"critical_count={critical_count}\n")
+              out.write(f"high_count={high_count}\n")
+              out.write(f"medium_count={medium_count}\n")
+              out.write(f"low_count={low_count}\n")
+
+          with open('/tmp/issues.json', 'w') as f:
+              json.dump(issues, f)
           PYEOF
 
-      # ── 4. Install John the Ripper ────────────────────────────────────────
+      # ── 4. Cache John the Ripper ──────────────────────────────────────────
+      # Caches the john binary and word-list data so reinstallation is skipped
+      # on subsequent runs, saving ~30–60 s per audit.
+      - name: Cache John the Ripper
+        id: cache-john
+        uses: actions/cache@v4
+        with:
+          path: |
+            /usr/sbin/john
+            /usr/share/john
+          key: john-${{ runner.os }}-apt-v1
+
+      # ── 5. Install John the Ripper (only on cache miss) ───────────────────
       - name: Install John the Ripper
+        if: steps.cache-john.outputs.cache-hit != 'true'
         run: |
           sudo apt-get update -q
           sudo apt-get install -y --no-install-recommends john
 
-      # ── 5. Create password hash ───────────────────────────────────────────
-      # openssl passwd does not accept -pass; we pipe the stored file to
-      # -stdin so the password value is never expanded on the command line.
+      # ── 6. Create password hash ───────────────────────────────────────────
       - name: Create password hash
         env:
           SSL_OPT: ${{ steps.opts.outputs.ssl_opt }}
@@ -193,7 +427,7 @@ jobs:
           HASH=$(openssl passwd "$SSL_OPT" -stdin < /tmp/password.txt)
           printf 'audit:%s\n' "$HASH" > /tmp/hash.txt
 
-      # ── 6. Run John the Ripper ────────────────────────────────────────────
+      # ── 7. Run John the Ripper ────────────────────────────────────────────
       - name: Run John the Ripper audit
         id: john
         env:
@@ -206,12 +440,10 @@ jobs:
           CRACK_METHOD="Not cracked within time limit"
           HALF=$(( TLIM / 2 ))
 
-          # Runs john and swallows non-zero exit (timeout / no crack)
           do_john() {
             timeout "$1" john --format="$JOHN_FMT" $2 /tmp/hash.txt 2>&1 || true
           }
 
-          # Returns 1 if at least one hash was cracked, 0 otherwise
           is_cracked() {
             john --show --format="$JOHN_FMT" /tmp/hash.txt 2>&1 \
               | grep -c "1 password hash cracked" || true
@@ -228,10 +460,8 @@ jobs:
               do_john "$TLIM" "--single"
               ;;
             auto|*)
-              # 1st half: wordlist attack
               do_john "$HALF" "--wordlist=/usr/share/john/password.lst"
               if [ "$(is_cracked)" -eq 0 ]; then
-                # 2nd half: incremental brute-force
                 do_john "$HALF" "--incremental"
               fi
               ;;
@@ -240,14 +470,12 @@ jobs:
           END=$(date +%s%3N)
           TOTAL_MS=$(( END - START ))
 
-          # Determine crack result
           SHOW=$(john --show --format="$JOHN_FMT" /tmp/hash.txt 2>&1 || true)
           if echo "$SHOW" | grep -q "1 password hash cracked"; then
             CRACKED=true
-            CRACK_METHOD="Cracked"
+            CRACK_METHOD="Cracked by John the Ripper"
           fi
 
-          # Quick benchmark: run for 3 s to report hardware speed
           BENCH=$(timeout 10 john --test=3 --format="$JOHN_FMT" 2>&1 \
             | grep -oP '\d+ c/s' | tail -1 || echo "N/A")
 
@@ -256,35 +484,57 @@ jobs:
           echo "total_ms=$TOTAL_MS"     >> "$GITHUB_OUTPUT"
           echo "bench=$BENCH"           >> "$GITHUB_OUTPUT"
 
-      # ── 7. Post report and close issue ───────────────────────────────────
+      # ── 8. Post report and close issue ───────────────────────────────────
       - name: Post audit report and close issue
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
         env:
-          LEN:      ${{ steps.stats.outputs.len }}
-          LO:       ${{ steps.stats.outputs.lo }}
-          UP:       ${{ steps.stats.outputs.up }}
-          DI:       ${{ steps.stats.outputs.di }}
-          SP:       ${{ steps.stats.outputs.sp }}
-          POOL:     ${{ steps.stats.outputs.pool }}
-          ENT:      ${{ steps.stats.outputs.ent }}
-          GRADE:    ${{ steps.stats.outputs.grade }}
-          CRACKED:  ${{ steps.john.outputs.cracked }}
-          METHOD:   ${{ steps.john.outputs.method }}
-          TOTAL_MS: ${{ steps.john.outputs.total_ms }}
-          BENCH:    ${{ steps.john.outputs.bench }}
-          HASH:     ${{ steps.opts.outputs.hash }}
-          TLIM:     ${{ steps.opts.outputs.time }}
-          MODE:     ${{ steps.opts.outputs.mode }}
+          LEN:            ${{ steps.stats.outputs.len }}
+          LO:             ${{ steps.stats.outputs.lo }}
+          UP:             ${{ steps.stats.outputs.up }}
+          DI:             ${{ steps.stats.outputs.di }}
+          SP:             ${{ steps.stats.outputs.sp }}
+          LO_COUNT:       ${{ steps.stats.outputs.lo_count }}
+          UP_COUNT:       ${{ steps.stats.outputs.up_count }}
+          DI_COUNT:       ${{ steps.stats.outputs.di_count }}
+          SP_COUNT:       ${{ steps.stats.outputs.sp_count }}
+          POOL:           ${{ steps.stats.outputs.pool }}
+          ENT:            ${{ steps.stats.outputs.ent }}
+          ENT_GRADE:      ${{ steps.stats.outputs.ent_grade }}
+          GRADE:          ${{ steps.stats.outputs.grade }}
+          ISSUE_COUNT:    ${{ steps.stats.outputs.issue_count }}
+          CRITICAL_COUNT: ${{ steps.stats.outputs.critical_count }}
+          HIGH_COUNT:     ${{ steps.stats.outputs.high_count }}
+          MEDIUM_COUNT:   ${{ steps.stats.outputs.medium_count }}
+          LOW_COUNT:      ${{ steps.stats.outputs.low_count }}
+          CRACKED:        ${{ steps.john.outputs.cracked }}
+          METHOD:         ${{ steps.john.outputs.method }}
+          TOTAL_MS:       ${{ steps.john.outputs.total_ms }}
+          BENCH:          ${{ steps.john.outputs.bench }}
+          HASH:           ${{ steps.opts.outputs.hash }}
+          TLIM:           ${{ steps.opts.outputs.time }}
+          MODE:           ${{ steps.opts.outputs.mode }}
         with:
           script: |
-            const ent      = parseFloat(process.env.ENT)  || 0;
-            const len      = parseInt(process.env.LEN)    || 0;
-            const grade    = process.env.GRADE;
-            const cracked  = process.env.CRACKED === 'true';
-            const totalSec = (parseInt(process.env.TOTAL_MS) / 1000).toFixed(1);
-            const bench    = process.env.BENCH || 'N/A';
+            const fs = require('fs');
 
-            // Grade → emoji
+            const ent       = parseFloat(process.env.ENT)  || 0;
+            const len       = parseInt(process.env.LEN)    || 0;
+            const grade     = process.env.GRADE;
+            const entGrade  = process.env.ENT_GRADE;
+            const cracked   = process.env.CRACKED === 'true';
+            const totalSec  = (parseInt(process.env.TOTAL_MS) / 1000).toFixed(1);
+            const bench     = process.env.BENCH || 'N/A';
+            const issueCount    = parseInt(process.env.ISSUE_COUNT)    || 0;
+            const criticalCount = parseInt(process.env.CRITICAL_COUNT) || 0;
+            const highCount     = parseInt(process.env.HIGH_COUNT)     || 0;
+            const mediumCount   = parseInt(process.env.MEDIUM_COUNT)   || 0;
+            const lowCount      = parseInt(process.env.LOW_COUNT)      || 0;
+
+            let securityIssues = [];
+            try {
+              securityIssues = JSON.parse(fs.readFileSync('/tmp/issues.json', 'utf8'));
+            } catch (_) {}
+
             const gradeEmoji = {
               'Very Weak':   '🔴',
               'Weak':        '🟠',
@@ -292,25 +542,52 @@ jobs:
               'Strong':      '🟢',
               'Very Strong': '💪',
             };
-            const emoji = gradeEmoji[grade] || '⚪';
+            const emoji    = gradeEmoji[grade]    || '⚪';
+            const entEmoji = gradeEmoji[entGrade] || '⚪';
 
-            // Entropy progress bar (128 bits = full bar, 20 chars wide)
-            const filled  = Math.round(Math.min(ent / 128, 1) * 20);
-            const bar     = '█'.repeat(filled) + '░'.repeat(20 - filled);
+            const filled = Math.round(Math.min(ent / 128, 1) * 20);
+            const bar    = '█'.repeat(filled) + '░'.repeat(20 - filled);
 
-            // Character-class rows
             const b = v => v === 't' ? '✅' : '❌';
             const classRows = [
-              `| Lowercase letters \`a–z\`       | ${b(process.env.LO)} |`,
-              `| Uppercase letters \`A–Z\`       | ${b(process.env.UP)} |`,
-              `| Digits \`0–9\`                  | ${b(process.env.DI)} |`,
-              `| Special characters \`!@#$…\`    | ${b(process.env.SP)} |`,
+              `| Lowercase letters \`a–z\`    | ${b(process.env.LO)} | ${process.env.LO_COUNT} |`,
+              `| Uppercase letters \`A–Z\`    | ${b(process.env.UP)} | ${process.env.UP_COUNT} |`,
+              `| Digits \`0–9\`               | ${b(process.env.DI)} | ${process.env.DI_COUNT} |`,
+              `| Special characters \`!@#$…\` | ${b(process.env.SP)} | ${process.env.SP_COUNT} |`,
+            ].join('\n');
+
+            const sevEmoji = { critical: '🔴', high: '🟠', medium: '🟡', low: '🔵' };
+            let issuesSection = '';
+            if (securityIssues.length === 0) {
+              issuesSection = `\n> ✅ No known bad-password patterns were detected.\n`;
+            } else {
+              const rows = securityIssues.map(([desc, sev], i) =>
+                `| ${i + 1} | ${desc} | ${sevEmoji[sev] || '⚪'} ${sev.toUpperCase()} |`
+              ).join('\n');
+              issuesSection = [
+                ``,
+                `| # | Issue | Severity |`,
+                `|---|---|---|`,
+                rows,
+              ].join('\n');
+            }
+
+            const tips = [
+              ``,
+              `- ✅ **Use a passphrase**: Four or more random, unrelated words (e.g. \`correct-horse-battery-staple\`) are both memorable and highly secure (80+ bits of entropy).`,
+              `- ✅ **Aim for 16+ characters** — length matters more than complexity.`,
+              `- ✅ **Mix character classes**: include uppercase, lowercase, digits, and symbols in unexpected positions — not just at the end.`,
+              `- ❌ **Never use dictionary words**, even with substitutions. Modern crackers normalise leet-speak (@ → a, 0 → o) automatically.`,
+              `- ❌ **Avoid predictable patterns**: no keyboard walks (qwerty), no sequential numbers (12345), no years or dates.`,
+              `- ❌ **Avoid "word + number" suffixes** like \`password1\` or \`dragon99\` — these are the first things tried.`,
+              `- ✅ **Use a password manager** (Bitwarden, 1Password, KeePass) to generate and store truly random, unique passwords for every account.`,
+              `- ✅ **Enable MFA** wherever possible — even a cracked password cannot be used without the second factor.`,
             ].join('\n');
 
             const comment = [
               `## 🔐 Password Audit Results`,
               ``,
-              `Hi @${context.payload.issue.user.login}! Your password audit is complete. Here are the results:`,
+              `Hi @${context.payload.issue.user.login}! Your password audit is complete. Here is a full breakdown of the results.`,
               ``,
               `---`,
               ``,
@@ -319,45 +596,81 @@ jobs:
               `| Property | Value |`,
               `|---|---|`,
               `| **Password length** | \`${len}\` characters |`,
-              `| **Character pool** | \`${process.env.POOL}\` possible characters |`,
-              `| **Entropy** | \`${ent}\` bits |`,
+              `| **Character pool size** | \`${process.env.POOL}\` possible characters |`,
+              `| **Shannon entropy** | \`${ent}\` bits |`,
               `| **Hash format used** | \`${process.env.HASH}\` |`,
               `| **Audit mode** | \`${process.env.MODE}\` |`,
               `| **Time limit** | \`${process.env.TLIM}s\` |`,
               `| **Total audit time** | \`${totalSec}s\` |`,
-              `| **Hardware speed** | \`${bench}\` |`,
+              `| **Hardware speed (benchmark)** | \`${bench}\` |`,
               ``,
               `---`,
               ``,
-              `### 🔡 Character Class Checklist`,
+              `### 🔡 Character Composition`,
               ``,
-              `| Class | Present |`,
-              `|---|---|`,
+              `| Class | Present | Count |`,
+              `|---|---|---|`,
               classRows,
               ``,
               `---`,
               ``,
-              `### 💪 Strength Verdict`,
+              `### 🔢 What Is Entropy? (Plain English Explanation)`,
+              ``,
+              `**Entropy** is a measure of how many possible combinations an attacker would need to try before guessing your password. Think of it like the size of a haystack — the larger the haystack, the longer it takes to find the needle.`,
+              ``,
+              `> **Key formula:** \`entropy = length × log₂(character pool size)\``,
+              `>`,
+              `> With a pool of **${process.env.POOL}** characters and a length of **${len}**, this password has **${ent} bits** of theoretical entropy — meaning roughly **2^${ent}** possible combinations if the password were chosen *randomly*.`,
+              ``,
+              `⚠️ **Important caveat:** High entropy is necessary but *not sufficient* for a secure password. If a password appears in a wordlist or follows a predictable pattern (like \`password1!\`), a cracker finds it *instantly* — regardless of what the entropy formula says. That is why this audit also runs pattern-based checks (see below).`,
+              ``,
+              `\`\`\``,
+              `Entropy scale — how hard is it to guess a truly random password of this size?`,
+              ``,
+              `[${bar}] ${ent} / 128 bits`,
+              ``,
+              `  🔴 Very Weak   < 28 bits   — guessed in milliseconds (e.g. "cat", "abc")`,
+              `  🟠 Weak        28–36 bits  — guessed in seconds      (e.g. "hello12")`,
+              `  🟡 Moderate    36–60 bits  — guessed in minutes/hours (e.g. "Tr0ub4d0r")`,
+              `  🟢 Strong      60–128 bits — would take years on modern hardware`,
+              `  💪 Very Strong 128+ bits   — effectively uncrackable by brute force`,
+              `\`\`\``,
               ``,
               `| Metric | Result |`,
               `|---|---|`,
-              `| **Overall grade** | ${emoji} **${grade}** |`,
-              `| **Cracked by John** | ${cracked ? '💀 **Yes — password found in audit**' : '✅ Not cracked within time limit'} |`,
+              `| **Entropy-based grade** | ${entEmoji} ${entGrade} (${ent} bits) |`,
+              ``,
+              `---`,
+              ``,
+              `### 🚨 Security Pattern Analysis`,
+              ``,
+              `The following checks were run to detect known-bad patterns, common dictionary words, keyboard walks, leet-speak substitutions, and other predictable structures that make a password easy to crack even when its entropy looks acceptable.`,
+              issuesSection,
+              ``,
+              `| Severity | Count | Meaning |`,
+              `|---|---|---|`,
+              `| 🔴 Critical | ${criticalCount} | Password will be cracked almost instantly |`,
+              `| 🟠 High | ${highCount} | Significantly weakens the password |`,
+              `| 🟡 Medium | ${mediumCount} | Reduces security, should be addressed |`,
+              `| 🔵 Low | ${lowCount} | Minor improvement opportunity |`,
+              ``,
+              `---`,
+              ``,
+              `### 💪 Overall Verdict`,
+              ``,
+              `> The **overall grade** is the *worst* of the entropy grade and the pattern-analysis grade. A password that scores well on entropy but matches a known bad pattern is still rated poorly — because a cracker would find it regardless of the theoretical entropy.`,
+              ``,
+              `| Metric | Result |`,
+              `|---|---|`,
+              `| **Entropy grade** | ${entEmoji} ${entGrade} (theoretical) |`,
+              `| **Overall security grade** | ${emoji} **${grade}** |`,
+              `| **Cracked by John the Ripper** | ${cracked ? '💀 **Yes — password was found during the audit**' : '✅ Not cracked within the time limit'} |`,
               `| **Crack method** | ${process.env.METHOD} |`,
               ``,
               `---`,
               ``,
-              `### 📈 Entropy Meter`,
-              ``,
-              `\`\`\``,
-              `[${bar}] ${ent} / 128 bits`,
-              ``,
-              `  🔴 Very Weak   < 28 bits`,
-              `  🟠 Weak        28 – 36 bits`,
-              `  🟡 Moderate    36 – 60 bits`,
-              `  🟢 Strong      60 – 128 bits`,
-              `  💪 Very Strong 128+ bits`,
-              `\`\`\``,
+              `### 💡 How to Create a Stronger Password`,
+              tips,
               ``,
               `---`,
               ``,
@@ -370,7 +683,6 @@ jobs:
               `*Audit powered by [John the Ripper](https://www.openwall.com/john/) · ${new Date().toUTCString()}*`,
             ].join('\n');
 
-            // Post the comment
             await github.rest.issues.createComment({
               owner: context.repo.owner,
               repo:  context.repo.repo,
@@ -378,7 +690,6 @@ jobs:
               body: comment,
             });
 
-            // Redact the original password from the issue body, then close
             await github.rest.issues.update({
               owner: context.repo.owner,
               repo:  context.repo.repo,
@@ -387,9 +698,7 @@ jobs:
               state: 'closed',
             });
 
-      # ── 8. Report workflow failures as a new issue ────────────────────
-      # Runs only when a previous step has failed so the developer is
-      # notified with full context and can investigate promptly.
+      # ── 9. Report workflow failures as a new issue ────────────────────────
       - name: Open failure-report issue
         if: failure()
         uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
