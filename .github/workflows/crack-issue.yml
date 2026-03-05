@@ -181,15 +181,13 @@ jobs:
           sudo apt-get install -y --no-install-recommends john
 
       # ── 5. Create password hash ───────────────────────────────────────────
-      # We use openssl passwd (OpenSSL 3+) which accepts a password via an
-      # environment variable to avoid any shell-injection risk.
+      # openssl passwd does not accept -pass; we pipe the stored file to
+      # -stdin so the password value is never expanded on the command line.
       - name: Create password hash
         env:
           SSL_OPT: ${{ steps.opts.outputs.ssl_opt }}
         run: |
-          PASSPHRASE=$(cat /tmp/password.txt)
-          HASH=$(PASSPHRASE="$PASSPHRASE" openssl passwd "$SSL_OPT" -pass env:PASSPHRASE)
-          unset PASSPHRASE
+          HASH=$(openssl passwd "$SSL_OPT" -stdin < /tmp/password.txt)
           printf 'audit:%s\n' "$HASH" > /tmp/hash.txt
 
       # ── 6. Run John the Ripper ────────────────────────────────────────────
@@ -384,4 +382,45 @@ jobs:
               issue_number: context.issue.number,
               body:  '[Password redacted after audit completed]',
               state: 'closed',
+            });
+
+      # ── 8. Report workflow failures as a new issue ────────────────────
+      # Runs only when a previous step has failed so the developer is
+      # notified with full context and can investigate promptly.
+      - name: Open failure-report issue
+        if: failure()
+        uses: actions/github-script@60a0d83039c74a4aee543508d2ffcb1c3799cdea # v7.0.1
+        env:
+          TRIGGER_ISSUE: ${{ github.event.issue.number }}
+          RUN_URL:       ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        with:
+          script: |
+            const runUrl      = process.env.RUN_URL;
+            const triggerNum  = process.env.TRIGGER_ISSUE;
+
+            await github.rest.issues.create({
+              owner: context.repo.owner,
+              repo:  context.repo.repo,
+              title: `🚨 Password Audit workflow failed (triggered by #${triggerNum})`,
+              body: [
+                `## ⚠️ Workflow Failure Detected`,
+                ``,
+                `@unaveragetech — a step in the **🔐 Password Audit** workflow failed`,
+                `and requires your attention.`,
+                ``,
+                `| Field | Value |`,
+                `|---|---|`,
+                `| **Triggering issue** | #${triggerNum} |`,
+                `| **Workflow run** | [View logs](${runUrl}) |`,
+                `| **Repository** | \`${context.repo.owner}/${context.repo.repo}\` |`,
+                `| **Timestamp** | ${new Date().toUTCString()} |`,
+                ``,
+                `### Next Steps`,
+                `1. Open the [workflow run](${runUrl}) and expand the failed step.`,
+                `2. Review the error output and fix the underlying cause.`,
+                `3. Close this issue once the problem is resolved.`,
+                ``,
+                `*This issue was opened automatically by the audit workflow.*`,
+              ].join('\n'),
+              labels: ['bug'],
             });

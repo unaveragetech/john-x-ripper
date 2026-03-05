@@ -685,8 +685,10 @@
         <div class="content">
           <strong>Hash creation</strong> — <code>openssl passwd</code> creates a
           salted crypt hash of the password (SHA-512, SHA-256, or MD5 crypt),
-          stored in a temporary file. The password is passed to OpenSSL via an
-          environment variable to prevent shell-injection risks.
+          stored in a temporary file. The password is supplied via
+          <code>-stdin</code> (read from the temporary file) so that the value
+          is never expanded on the command line, preventing shell-injection
+          risks.
         </div>
       </li>
       <li>
