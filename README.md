@@ -1,185 +1,179 @@
-[![Circle CI](https://circleci.com/gh/openwall/john/tree/bleeding-jumbo.svg?style=shield)](https://circleci.com/gh/openwall/john/tree/bleeding-jumbo)
-[![Downloads](https://img.shields.io/badge/Download-Windows%20Build-blue.svg)](https://github.com/openwall/john-packages/releases)
-[![License](https://img.shields.io/badge/License-GPL%20v2%2B-blue.svg)](https://github.com/openwall/john/blob/bleeding-jumbo/doc/LICENSE)
-![GitHub commit activity](https://img.shields.io/github/commit-activity/m/openwall/john?color=yellow)
-![GitHub commits since tagged version](https://img.shields.io/github/commits-since/openwall/john/1.9.0-Jumbo-1?color=brown)
+# 🔐 Password Audit via GitHub Issues
 
-John the Ripper
-===============
+[![GitHub Actions](https://img.shields.io/badge/Powered%20by-GitHub%20Actions-blue?logo=github-actions)](https://github.com/features/actions)
+[![John the Ripper](https://img.shields.io/badge/Engine-John%20the%20Ripper-red)](https://www.openwall.com/john/)
+[![Educational](https://img.shields.io/badge/Purpose-Educational%20Only-yellow)](https://github.com/unaveragetech/john-x-ripper)
 
-This is the community-enhanced, "jumbo" version of John the Ripper.
-It has a lot of code, documentation, and data contributed by jumbo
-developers and the user community.  It is easy for new code to be added
-to jumbo, and the quality requirements are low, although lately we've
-started subjecting all contributions to quite some automated testing.
-This means that you get a lot of functionality that is not necessarily
-"mature", which in turn means that bugs in this code are to be expected.
-
-John the Ripper homepage is:
-
-https://www.openwall.com/john/
-
-If you have any comments on this release or on JtR in general, please
-join the john-users mailing list and post in there:
-
-https://www.openwall.com/lists/john-users/
-
-For contributions to John the Ripper jumbo, please use pull requests on
-GitHub:
-
-https://github.com/openwall/john/blob/bleeding-jumbo/CONTRIBUTING.md
-
-Included below is basic John the Ripper core documentation.
+> **Open an issue, get an instant, comprehensive password security report — powered by John the Ripper and an extensive pattern-analysis engine.**
 
 ---
 
-##	John the Ripper password cracker.
+## 🧭 What Is This?
 
-John the Ripper is a fast password cracker, currently available for
-many flavors of Unix, macOS, Windows, DOS, BeOS, and OpenVMS (the latter
-requires a contributed patch).  Its primary purpose is to detect weak
-Unix passwords.  Besides several crypt(3) password hash types most
-commonly found on various Unix flavors, supported out of the box are
-Kerberos/AFS and Windows LM hashes, as well as DES-based tripcodes, plus
-hundreds of additional hashes and ciphers in "-jumbo" versions.
+This repository uses a **GitHub Actions workflow** to audit a password's security whenever a new issue is opened with the title `crack`. The workflow automatically:
 
+1. 🔍 **Parses** the password from the issue body (and optional flags)
+2. 📊 **Analyses** it with an extensive security-pattern engine (see below)
+3. 🔨 **Hashes** it with `openssl passwd` (SHA-512crypt by default)
+4. ⚡ **Runs John the Ripper** to attempt to crack it within a time limit
+5. 📝 **Posts a detailed report** as a comment (mentioning you), then closes the issue
+6. 🔒 **Redacts** the password from the issue body for privacy
 
-##	How to install.
+The password analysis engine checks for:
+- Known common/bad passwords (100+ entries)
+- Leet-speak substitutions of dictionary words (`p@ssw0rd`, `@dmin`, etc.)
+- Keyboard-walk patterns (`qwerty`, `asdf`, `1q2w3e`, etc.)
+- Sequential character runs (`123456`, `abcde`, etc.)
+- Repeated characters (`aaaa`, `1111`, etc.)
+- Year and date patterns (`1990`, `0101`, etc.)
+- "Word + number" and "word + symbol" predictable structures
+- Missing character classes (no uppercase, no symbols, etc.)
 
-See [INSTALL](doc/INSTALL) for information on installing John on your system.
+---
 
+## 🚀 Quick Start
 
-##	How to use.
+1. **[Open a new issue](../../issues/new)**
+2. **Set the title** to exactly: `crack` *(case-sensitive)*
+3. **Put your password in the body** (first non-blank, non-flag line):
+   ```
+   MyPasswordToTest
+   ```
+4. **Submit** — the workflow starts immediately. Within ~2 minutes you'll receive a comment with a full audit report, then the issue is automatically closed and the password is redacted.
 
-To run John, you need to supply it with some password files and
-optionally specify a cracking mode, like this, using the default order
-of modes and assuming that "passwd" is a copy of your password file:
+---
 
-	john passwd
+## ⚙️ Optional Flags
 
-or, to restrict it to the wordlist mode only, but permitting the use
-of word mangling rules:
+Add these on separate lines *after* the password:
 
-	john --wordlist=password.lst --rules passwd
+| Flag | Default | Description |
+|---|---|---|
+| `--hash=sha512crypt` | `sha512crypt` | Hash algorithm: `sha512crypt`, `sha256crypt`, or `md5crypt` |
+| `--time=30` | `30` | Cracking time limit in seconds (10–120) |
+| `--mode=auto` | `auto` | Attack mode: `auto`, `wordlist`, `incremental`, `single` |
 
-Cracked passwords will be printed to the terminal and saved in the
-file called $JOHN/john.pot (in the documentation and in the
-configuration file for John, "$JOHN" refers to John's "home
-directory"; which directory it really is depends on how you installed
-John).  The $JOHN/john.pot file is also used to not load password
-hashes that you already cracked when you run John the next time.
+**Example with all flags:**
+```
+Tr0ub4dor&3
+--hash=sha256crypt
+--time=60
+--mode=auto
+```
 
-To retrieve the cracked passwords, run:
+### Attack Modes
 
-	john --show passwd
+| Mode | Description |
+|---|---|
+| `auto` | Tries wordlist first, then incremental brute-force with remaining time |
+| `wordlist` | Only runs the built-in word list (`password.lst`) |
+| `incremental` | Character-by-character brute-force |
+| `single` | Uses login name and GECOS field mutations |
 
-While cracking, you can press any key for status, or 'q' or Ctrl-C to
-abort the session saving its state to a file ($JOHN/john.rec by
-default).  If you press Ctrl-C for a second time before John had a
-chance to complete handling of your first Ctrl-C, John will abort
-immediately without saving.  By default, the state is also saved every
-10 minutes to permit for recovery in case of a crash.
+---
 
-To continue an interrupted session, run:
+## 📊 Understanding the Report
 
-	john --restore
+The report produced by the audit contains several sections:
 
-These are just the most essential things you can do with John.  For
-a complete list of command line options and for more complicated usage
-examples you should refer to OPTIONS and EXAMPLES, respectively.
+### 📈 Audit Statistics
+Basic numbers: password length, character pool size, entropy, hash format used, cracking time, and hardware benchmark speed.
 
-Please note that "binary" (pre-compiled) distributions of John may
-include alternate executables instead of just "john".  You may need to
-choose the executable that fits your system best, e.g. "john-omp" to
-take advantage of multiple CPUs and/or CPU cores.
+### 🔡 Character Composition
+A breakdown of how many lowercase, uppercase, digit, and special characters the password contains.
 
+### 🔢 What Is Entropy? (Plain English)
+**Entropy** (measured in bits) tells you how many possible combinations an attacker would need to try to guess your password *if it were chosen randomly from a uniform distribution*.
 
-##	Features.
+```
+entropy = length × log₂(character pool size)
+```
 
-John the Ripper is designed to be both feature-rich and fast.  It
-combines several cracking modes in one program and is fully
-configurable for your particular needs (you can even define a custom
-cracking mode using the built-in compiler supporting a subset of C).
-Also, John is available for several different platforms which enables
-you to use the same cracker everywhere (you can even continue a
-cracking session which you started on another platform).
+For example, a 10-character password using only lowercase letters has a pool of 26:
+```
+10 × log₂(26) ≈ 47 bits → ~140 trillion combinations
+```
 
-Out of the box, John supports (and autodetects) the following Unix
-crypt(3) hash types: traditional DES-based, "bigcrypt", BSDI extended
-DES-based, FreeBSD MD5-based (also used on Linux and in Cisco IOS), and
-OpenBSD Blowfish-based (now also used on some Linux distributions and
-supported by recent versions of Solaris).  Also supported out of the box
-are Kerberos/AFS and Windows LM (DES-based) hashes, as well as DES-based
-tripcodes.
+**The critical caveat:** Entropy is theoretical. It assumes the password was chosen *randomly*. If `password1!` appears in a wordlist, an attacker finds it in milliseconds — the entropy formula doesn't know that.
 
-When running on Linux distributions with glibc 2.7+, John 1.7.6+
-additionally supports (and autodetects) SHA-crypt hashes (which are
-actually used by recent versions of Fedora and Ubuntu), with optional
-OpenMP parallelization (requires GCC 4.2+, needs to be explicitly
-enabled at compile-time by uncommenting the proper OMPFLAGS line near
-the beginning of the Makefile).
+| Grade | Entropy Range | What it means |
+|---|---|---|
+| 🔴 Very Weak | < 28 bits | Guessed in milliseconds |
+| 🟠 Weak | 28–36 bits | Guessed in seconds |
+| 🟡 Moderate | 36–60 bits | Minutes to hours on modern hardware |
+| 🟢 Strong | 60–128 bits | Years to crack with dedicated hardware |
+| 💪 Very Strong | 128+ bits | Effectively uncrackable by brute force |
 
-Similarly, when running on recent versions of Solaris, John 1.7.6+
-supports and autodetects SHA-crypt and SunMD5 hashes, also with
-optional OpenMP parallelization (requires GCC 4.2+ or recent Sun Studio,
-needs to be explicitly enabled at compile-time by uncommenting the
-proper OMPFLAGS line near the beginning of the Makefile and at runtime
-by setting the OMP_NUM_THREADS environment variable to the desired
-number of threads).
+### 🚨 Security Pattern Analysis
+This section lists every insecurity issue detected, each with a **severity level**:
+- 🔴 **Critical** — will be cracked almost instantly (e.g., in a common passwords list)
+- 🟠 **High** — significantly weakens the password (e.g., dictionary word, keyboard walk)
+- 🟡 **Medium** — reduces security (e.g., missing character class, date pattern)
+- 🔵 **Low** — minor improvement opportunity
 
-"-jumbo" versions add support for hundreds of additional hash and cipher
-types, including fast built-in implementations of SHA-crypt and SunMD5,
-Windows NTLM (MD4-based) password hashes, various macOS and Mac OS X
-user password hashes, fast hashes such as raw MD5, SHA-1, SHA-256, and
-SHA-512 (which many "web applications" historically misuse for
-passwords), various other "web application" password hashes, various SQL
-and LDAP server password hashes, and lots of other hash types, as well
-as many non-hashes such as SSH private keys, S/Key skeykeys files,
-Kerberos TGTs, encrypted filesystems such as macOS .dmg files and
-"sparse bundles", encrypted archives such as ZIP (classic PKZIP and
-WinZip/AES), RAR, and 7z, encrypted document files such as PDF and
-Microsoft Office's - and these are just some examples.  To load some of
-these larger files for cracking, a corresponding bundled *2john program
-should be used first, and then its output fed into JtR -jumbo.
+### 💪 Overall Verdict
+The **overall grade** is the *worst* of:
+- The entropy-based grade
+- The pattern-analysis grade
 
+This means `password1!` (entropy grade: Strong) correctly shows as **Very Weak** because it is found in the common passwords list.
 
-##	Graphical User Interface (GUI).
+### 💡 Password Improvement Tips
+Actionable advice on how to create a stronger, more secure password.
 
-There is an official GUI for John the Ripper: Johnny.
+---
 
-Despite the fact that Johnny is oriented onto JtR core, all basic
-functionality is supposed to work in all versions, including jumbo.
+## 🔒 Security & Privacy
 
-Johnny is a separate program, therefore you need to have John the Ripper
-installed in order to use it.
+> ⚠️ **IMPORTANT: Never submit a real, currently-used password.**
+>
+> GitHub issues are **public** by default. Anyone can see the issue body before it is redacted. The password is masked in workflow logs, but it is visible in the issue body for the ~2 minutes the workflow runs.
 
-More information about Johnny and its releases is on the wiki:
+**What the workflow does to protect your password:**
+- Uses `::add-mask::` to hide the password from all subsequent log lines
+- Pipes the password through a file rather than expanding it on the command line (prevents shell injection)
+- Replaces the issue body with `[Password redacted after audit completed]` after the audit
 
-https://openwall.info/wiki/john/johnny
+**Best practices:**
+- Test passwords you are *considering* using — not ones already deployed
+- Change any real password *before* submitting it here
+- Fork this repository and make it **private** if you want fully private audits
 
+---
 
-##	Documentation.
+## ⚡ Performance: Caching John the Ripper
 
-The rest of documentation is located in separate files, listed here in
-the recommended order of reading:
+The workflow uses `actions/cache` to cache the John the Ripper binary and word lists between runs. This avoids reinstalling (~30–60 s of `apt-get`) on every audit, making repeat runs significantly faster.
 
-* [INSTALL](doc/INSTALL) - installation instructions
-* [OPTIONS](doc/OPTIONS) - command line options and additional utilities
-* [MODES](doc/MODES) - cracking modes: what they are
-* [CONFIG](doc/CONFIG) (*) - how to customize
-* [RULES](doc/RULES) (*) - wordlist rules syntax
-* [EXTERNAL](doc/EXTERNAL) (*) - defining an external mode
-* [EXAMPLES](doc/EXAMPLES) - usage examples - strongly recommended
-* [FAQ](doc/FAQ) - guess
-* [CHANGES](doc/CHANGES) (*) - history of changes
-* [CONTACT](doc/CONTACT) (*) - how to contact the author or otherwise obtain support
-* [CREDITS](doc/CREDITS) (*) - credits
-* [LICENSE](doc/LICENSE) - copyrights and licensing terms
-* [COPYING](doc/COPYING) - GNU GPL version 2, as referenced by LICENSE above
+The cache key is `john-<OS>-apt-v1`. If the John the Ripper version needs to be updated, increment the version suffix in the workflow.
 
-(*) most users can safely skip these.
+---
 
-There are a lot of additional documentation files in jumbo's "doc"
-directory, which you'll also want to explore.
+## 📖 Full Documentation
 
-Happy reading!
+See [index.html](index.html) (or the [GitHub Pages site](https://unaveragetech.github.io/john-x-ripper/)) for the full usage guide, including:
+- All available flags and examples
+- Detailed explanations of every report field
+- FAQ
+- How the workflow works step-by-step
+
+---
+
+## 🛠️ Technical Details
+
+| Component | Details |
+|---|---|
+| **Workflow trigger** | `issues.opened` where `title == 'crack'` |
+| **Runner** | `ubuntu-latest` |
+| **Hash tool** | `openssl passwd` (-6 / -5 / -1) |
+| **Cracking engine** | John the Ripper 1.9.0 (Ubuntu package) |
+| **Analysis engine** | Python 3 (embedded in workflow) |
+| **Report posting** | `actions/github-script` v7 |
+| **Timeout** | 10 minutes (workflow), 10–120 s (cracking) |
+
+---
+
+## 📜 License
+
+This repository's **workflow and tooling** is released under the MIT License.  
+John the Ripper is released under the **GNU GPL v2+** license — see [doc/LICENSE](doc/LICENSE).

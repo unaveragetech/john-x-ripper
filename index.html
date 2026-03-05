@@ -509,107 +509,274 @@
             <td>Total number of characters in the password.</td>
           </tr>
           <tr>
-            <td><strong>Character pool</strong></td>
+            <td><strong>Character pool size</strong></td>
             <td>
-              The number of distinct characters John must consider when brute-forcing.
-              A pool of 95 (all printable ASCII) is best.
+              The number of distinct character types the password uses (lowercase = 26,
+              uppercase = 26, digits = 10, special = 33). A pool of 95 (all printable ASCII) is maximum.
             </td>
           </tr>
           <tr>
-            <td><strong>Entropy</strong></td>
+            <td><strong>Shannon entropy</strong></td>
             <td>
-              Bits of entropy = <code>length × log₂(pool)</code>. Higher is better.
-              This is the theoretical information content of the password.
+              Bits of entropy = <code>length × log₂(pool)</code>. This measures how many
+              combinations exist <em>if the password were chosen randomly</em>. See the full
+              explanation below — entropy alone does <strong>not</strong> catch common passwords.
             </td>
           </tr>
           <tr>
             <td><strong>Hash format used</strong></td>
-            <td>The crypt algorithm used to produce the test hash.</td>
+            <td>The crypt algorithm used to produce the test hash (sha512crypt / sha256crypt / md5crypt).</td>
           </tr>
           <tr>
             <td><strong>Audit mode</strong></td>
-            <td>Which attack strategy John used.</td>
+            <td>Which attack strategy John the Ripper used (auto / wordlist / incremental / single).</td>
           </tr>
           <tr>
             <td><strong>Time limit</strong></td>
-            <td>Maximum wall-clock seconds allocated for cracking.</td>
+            <td>Maximum wall-clock seconds allocated for cracking (10–120 s, default 30 s).</td>
           </tr>
           <tr>
             <td><strong>Total audit time</strong></td>
             <td>Actual seconds elapsed during the cracking attempt.</td>
           </tr>
           <tr>
-            <td><strong>Hardware speed</strong></td>
-            <td>Candidates per second the runner can test (from a 3-second benchmark).</td>
+            <td><strong>Hardware speed (benchmark)</strong></td>
+            <td>
+              Candidates per second the GitHub runner can test against your chosen hash
+              (from a 3-second benchmark run). SHA-512crypt is intentionally slow, which
+              is why it is the recommended default.
+            </td>
           </tr>
         </tbody>
       </table>
     </div>
 
+    <h3>🔢 What Is Entropy? (Plain English)</h3>
+    <p>
+      <strong>Entropy</strong> is a measure of how many possible combinations an attacker
+      would need to try before guessing your password — assuming it was picked
+      <em>completely at random</em> from the available character set.
+    </p>
+    <p>
+      Think of it like a combination lock. A 4-digit PIN lock has 10,000 combinations.
+      A 6-digit lock has 1,000,000. Each extra digit (or character) multiplies the
+      number of combinations.
+    </p>
+    <pre><code>entropy = length × log₂(character pool size)
+
+Example: "abc123!" → length=7, pool=69 → 7 × log₂(69) ≈ 42.8 bits
+         meaning 2^42.8 ≈ 7 trillion possible combinations if chosen randomly</code></pre>
+    <div class="alert warn">
+      <span class="alert-icon">⚠️</span>
+      <div>
+        <strong>High entropy does NOT automatically mean a secure password.</strong><br>
+        <code>password1!</code> has ~61 bits of theoretical entropy — which would put it
+        in the <em>Strong</em> tier by entropy alone. But it is one of the most commonly
+        used passwords in the world and appears in every major wordlist. A cracker finds
+        it in milliseconds. That is why this audit also runs <strong>pattern-based checks</strong>
+        (see below) and the final grade reflects <em>both</em>.
+      </div>
+    </div>
+
     <h3>Strength Grades</h3>
+    <p>
+      Two grades are shown in the report. The <strong>overall grade</strong> is the
+      <em>worst</em> of the entropy grade and the pattern-analysis grade.
+    </p>
     <div class="meter-wrap card">
       <div class="meter-row">
         <span class="meter-label">🔴 Very Weak</span>
         <div class="meter-bar" style="width:15%;"></div>
-        <span class="meter-bits">&lt; 28 bits</span>
+        <span class="meter-bits">&lt; 28 bits <em>or</em> critical pattern found</span>
       </div>
       <div class="meter-row">
         <span class="meter-label">🟠 Weak</span>
         <div class="meter-bar" style="width:28%;"></div>
-        <span class="meter-bits">28 – 36 bits</span>
+        <span class="meter-bits">28–36 bits <em>or</em> high-severity pattern found</span>
       </div>
       <div class="meter-row">
         <span class="meter-label">🟡 Moderate</span>
         <div class="meter-bar" style="width:47%;"></div>
-        <span class="meter-bits">36 – 60 bits</span>
+        <span class="meter-bits">36–60 bits <em>or</em> medium-severity patterns</span>
       </div>
       <div class="meter-row">
         <span class="meter-label">🟢 Strong</span>
         <div class="meter-bar" style="width:75%;"></div>
-        <span class="meter-bits">60 – 128 bits</span>
+        <span class="meter-bits">60–128 bits, no critical/high patterns</span>
       </div>
       <div class="meter-row">
         <span class="meter-label">💪 Very Strong</span>
         <div class="meter-bar" style="width:100%;"></div>
-        <span class="meter-bits">128+ bits</span>
+        <span class="meter-bits">128+ bits, no significant patterns</span>
       </div>
+    </div>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Entropy range</th><th>Example password</th><th>Entropy grade</th><th>Notes</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>&lt; 28 bits</td>
+            <td><code>cat</code></td>
+            <td>🔴 Very Weak</td>
+            <td>Guessed in milliseconds</td>
+          </tr>
+          <tr>
+            <td>28–36 bits</td>
+            <td><code>hello12</code></td>
+            <td>🟠 Weak</td>
+            <td>Guessed in seconds</td>
+          </tr>
+          <tr>
+            <td>36–60 bits</td>
+            <td><code>Tr0ub4d0r</code></td>
+            <td>🟡 Moderate</td>
+            <td>Minutes to hours on modern hardware</td>
+          </tr>
+          <tr>
+            <td>60–128 bits</td>
+            <td><code>correct-horse-battery-staple</code></td>
+            <td>🟢 Strong</td>
+            <td>Years to crack with dedicated hardware</td>
+          </tr>
+          <tr>
+            <td>128+ bits</td>
+            <td>Random 20+ char passphrase</td>
+            <td>💪 Very Strong</td>
+            <td>Effectively uncrackable by brute force</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>🚨 Security Pattern Analysis</h3>
+    <p>
+      In addition to entropy, the audit runs an extensive list of pattern-based
+      security checks. These detect weaknesses that entropy cannot see:
+    </p>
+    <div class="table-wrap">
+      <table>
+        <thead>
+          <tr><th>Check</th><th>Severity</th><th>Example</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Password in top common-passwords list</td>
+            <td>🔴 Critical</td>
+            <td><code>password1!</code>, <code>qwerty123</code>, <code>admin</code></td>
+          </tr>
+          <tr>
+            <td>Common word with simple suffix</td>
+            <td>🔴 Critical</td>
+            <td><code>dragon99</code>, <code>monkey!</code></td>
+          </tr>
+          <tr>
+            <td>All-digit password</td>
+            <td>🔴 Critical</td>
+            <td><code>19801225</code>, <code>123456789</code></td>
+          </tr>
+          <tr>
+            <td>Too short (under 8 characters)</td>
+            <td>🔴 Critical</td>
+            <td><code>abc1!</code></td>
+          </tr>
+          <tr>
+            <td>Contains a common dictionary word</td>
+            <td>🟠 High</td>
+            <td><code>sunshine99</code>, <code>football!</code></td>
+          </tr>
+          <tr>
+            <td>Leet-speak substitution of a dictionary word</td>
+            <td>🟠 High</td>
+            <td><code>p@ssw0rd</code>, <code>@dmin1</code></td>
+          </tr>
+          <tr>
+            <td>Keyboard-walk pattern</td>
+            <td>🟠 High</td>
+            <td><code>qwerty</code>, <code>asdfgh</code>, <code>1q2w3e</code></td>
+          </tr>
+          <tr>
+            <td>Sequential character run</td>
+            <td>🟠 High</td>
+            <td><code>123456</code>, <code>abcdef</code></td>
+          </tr>
+          <tr>
+            <td>4+ repeated characters</td>
+            <td>🟠 High</td>
+            <td><code>aaaa</code>, <code>1111</code></td>
+          </tr>
+          <tr>
+            <td>Below recommended length (8–11 chars)</td>
+            <td>🟠 High</td>
+            <td><code>Pass1!</code></td>
+          </tr>
+          <tr>
+            <td>Contains a year pattern</td>
+            <td>🟡 Medium</td>
+            <td><code>summer2023</code>, <code>pass1990!</code></td>
+          </tr>
+          <tr>
+            <td>Date pattern (MMDD / DDMM)</td>
+            <td>🟡 Medium</td>
+            <td><code>0101pass</code></td>
+          </tr>
+          <tr>
+            <td>Word + short number pattern</td>
+            <td>🟡 Medium</td>
+            <td><code>fluffy99!</code></td>
+          </tr>
+          <tr>
+            <td>No uppercase letters</td>
+            <td>🟡 Medium</td>
+            <td><code>mypassword1!</code></td>
+          </tr>
+          <tr>
+            <td>No special characters</td>
+            <td>🟡 Medium</td>
+            <td><code>MyPassword1</code></td>
+          </tr>
+          <tr>
+            <td>No digits</td>
+            <td>🔵 Low</td>
+            <td><code>MyPassword!</code></td>
+          </tr>
+        </tbody>
+      </table>
     </div>
 
     <h3>What "Cracked" Means</h3>
     <p>
       If John the Ripper finds the password within the time limit, it reports
-      <em>"Cracked"</em>. This means the password is weak enough to be discovered
-      using automated tools in a short time — a real attacker would likely succeed.
+      <em>"Cracked by John the Ripper"</em>. This means the password is weak enough to be
+      discovered using automated tools in a short time — a real attacker would succeed.
     </p>
     <p>
       <em>"Not cracked within time limit"</em> does <strong>not</strong> guarantee
       the password is safe. It only means John could not find it within the allocated
       time on GitHub's shared runners. A dedicated attacker with specialised hardware
-      could still crack it.
+      or a larger wordlist could still crack it.
     </p>
 
-    <h3>What "Entropy" Means</h3>
-    <p>
-      Entropy measures the unpredictability of a password. Each bit of entropy
-      doubles the number of guesses an attacker needs. 60 bits ≈ 2<sup>60</sup>
-      ≈ 1.15 quintillion guesses. Modern GPUs can test billions of
-      <code>md5crypt</code> hashes per second, so only high-entropy passwords
-      with slow hash functions are truly safe.
-    </p>
-    <div class="table-wrap">
-      <table>
-        <thead>
-          <tr><th>Entropy</th><th>Example password</th><th>Typical crack time</th></tr>
-        </thead>
-        <tbody>
-          <tr><td>&lt; 28 bits</td><td><code>cat</code></td><td>Milliseconds</td></tr>
-          <tr><td>28 – 36 bits</td><td><code>password1</code></td><td>Seconds</td></tr>
-          <tr><td>36 – 60 bits</td><td><code>P@ssw0rd123</code></td><td>Minutes to hours</td></tr>
-          <tr><td>60 – 128 bits</td><td><code>C0rrect#H0rse$Battery</code></td><td>Years to centuries</td></tr>
-          <tr><td>128+ bits</td><td>Random 20+ char passphrase</td><td>Astronomically long</td></tr>
-        </tbody>
-      </table>
-    </div>
+    <h3>💡 How to Create a Strong Password</h3>
+    <ul style="padding-left:1.5rem; margin-bottom:1rem;">
+      <li>✅ <strong>Use a passphrase</strong>: Four or more random, unrelated words
+        (e.g. <code>correct-horse-battery-staple</code>) are both memorable and highly
+        secure (80+ bits of entropy).</li>
+      <li>✅ <strong>Aim for 16+ characters</strong> — length matters more than complexity.</li>
+      <li>✅ <strong>Mix character classes</strong>: uppercase, lowercase, digits, and
+        symbols in unexpected positions — not just at the end.</li>
+      <li>❌ <strong>Never use dictionary words</strong>, even with substitutions.
+        Modern crackers normalise leet-speak (@ → a, 0 → o) automatically.</li>
+      <li>❌ <strong>Avoid predictable patterns</strong>: no keyboard walks (qwerty),
+        sequential numbers (12345), years, or dates.</li>
+      <li>❌ <strong>Avoid "word + number" suffixes</strong> like <code>password1</code>
+        or <code>dragon99</code> — these are among the first patterns tried.</li>
+      <li>✅ <strong>Use a password manager</strong> (Bitwarden, 1Password, KeePass) to
+        generate and store truly random, unique passwords for every account.</li>
+      <li>✅ <strong>Enable MFA</strong> wherever possible — even a cracked password
+        cannot be used without the second factor.</li>
+    </ul>
   </section>
 
   <!-- ── Security & Privacy ────────────────────────────────────────────── -->
@@ -663,7 +830,7 @@
       <li>
         <div class="content">
           <strong>Title check</strong> — The workflow only runs if
-          <code>github.event.issue.title == 'crack'</code>.
+          <code>github.event.issue.title == 'crack'</code> (exact match, case-sensitive).
         </div>
       </li>
       <li>
@@ -671,45 +838,57 @@
           <strong>Body parsing</strong> — The first non-blank, non-flag line is
           extracted as the password (max 256 characters). Optional
           <code>--flag=value</code> lines are parsed for hash, time, and mode settings.
-          The password is immediately masked in all subsequent log output.
+          The password is immediately masked in all subsequent log output using
+          <code>::add-mask::</code>.
         </div>
       </li>
       <li>
         <div class="content">
-          <strong>Complexity analysis</strong> — A Python script calculates
-          entropy, character-class usage, and assigns a strength grade based on
-          the NIST SP 800-63B guidelines.
+          <strong>Complexity &amp; pattern analysis</strong> — A Python script calculates
+          entropy and character-class counts, then runs an extensive list of
+          insecurity checks: common-password lookup, leet-speak normalisation,
+          keyboard-walk detection, sequential/repeated character detection, date-pattern
+          matching, and more. The final security grade is the <em>worst</em> of the
+          entropy grade and the pattern-analysis grade.
+        </div>
+      </li>
+      <li>
+        <div class="content">
+          <strong>John the Ripper (cached)</strong> — The john binary and word lists
+          are restored from the GitHub Actions cache if available, avoiding
+          reinstallation on every run. On a cache miss the package is installed via
+          <code>apt-get</code> and then cached for future runs.
         </div>
       </li>
       <li>
         <div class="content">
           <strong>Hash creation</strong> — <code>openssl passwd</code> creates a
-          salted crypt hash of the password (SHA-512, SHA-256, or MD5 crypt),
-          stored in a temporary file. The password is supplied via
-          <code>-stdin</code> (read from the temporary file) so that the value
-          is never expanded on the command line, preventing shell-injection
-          risks.
+          salted crypt hash (SHA-512, SHA-256, or MD5 crypt) stored in a temporary
+          file. The password is supplied via <code>-stdin</code> so that its value
+          is never expanded on the command line, preventing shell-injection risks.
         </div>
       </li>
       <li>
         <div class="content">
-          <strong>John the Ripper</strong> — The john binary (installed from the
-          Ubuntu package repository) attempts to crack the hash within the time
-          limit using the selected attack mode.
+          <strong>John the Ripper cracking</strong> — John attempts to crack the hash
+          within the time limit using the selected attack mode (wordlist, incremental,
+          single, or auto which tries both). Both the crack result and a hardware
+          benchmark speed are recorded.
         </div>
       </li>
       <li>
         <div class="content">
-          <strong>Report generation</strong> — Results (statistics, strength
-          verdict, crack outcome, entropy meter) are formatted as a Markdown
-          comment using the GitHub Actions Script action.
+          <strong>Report generation</strong> — All results (statistics, character
+          composition, entropy explanation, pattern-analysis issues, overall verdict,
+          improvement tips) are formatted as a detailed Markdown comment and posted
+          using the GitHub Actions Script action.
         </div>
       </li>
       <li>
         <div class="content">
-          <strong>Cleanup</strong> — The comment is posted mentioning the issue
-          author, the issue body is replaced with a redaction notice, and the
-          issue is closed.
+          <strong>Cleanup</strong> — The comment is posted @mentioning the issue
+          author, the issue body is replaced with
+          <code>[Password redacted after audit completed]</code>, and the issue is closed.
         </div>
       </li>
     </ol>
@@ -777,6 +956,47 @@
         Yes. If you fork this repository and make it private, the issues will be
         private too. The workflow uses only built-in GitHub tokens and does not
         send data to any external service.
+      </p>
+    </details>
+
+    <details>
+      <summary>Why does my strong-looking password get a "Very Weak" grade?</summary>
+      <p>
+        The overall grade is the <em>worst</em> of the entropy-based grade and the
+        pattern-analysis grade. A password like <code>password1!</code> has ~61 bits
+        of theoretical entropy (which would be "Strong"), but it appears in every
+        major common-passwords list. The pattern checker detects this and marks it
+        as Critical severity, which pulls the final grade down to Very Weak.
+        <br><br>
+        High entropy is necessary but not sufficient. A good password must be
+        <em>both</em> high-entropy <em>and</em> not match any known bad patterns.
+      </p>
+    </details>
+
+    <details>
+      <summary>What is leet-speak normalisation and why does it matter?</summary>
+      <p>
+        Leet-speak (or 1337) replaces letters with visually similar characters:
+        <code>a → @</code>, <code>e → 3</code>, <code>i → 1</code>, <code>o → 0</code>,
+        <code>s → $</code>, etc. People use these substitutions thinking it makes their
+        password harder to guess. But modern password crackers automatically try every
+        combination of leet-speak substitutions, so <code>p@ssw0rd</code> is cracked
+        just as quickly as <code>password</code>.
+        <br><br>
+        This audit normalises leet-speak before checking against the dictionary-word
+        list so that these substitutions do not hide a weak root word.
+      </p>
+    </details>
+
+    <details>
+      <summary>How is John the Ripper installed — does it reinstall every time?</summary>
+      <p>
+        No. The workflow uses <code>actions/cache</code> to cache the John the Ripper
+        binary (<code>/usr/sbin/john</code>) and word lists (<code>/usr/share/john</code>)
+        between runs. On the <em>first</em> run the package is installed via
+        <code>apt-get</code> and then stored in the cache. On subsequent runs the
+        cached files are restored and the install step is skipped, saving ~30–60 seconds
+        per audit.
       </p>
     </details>
 
