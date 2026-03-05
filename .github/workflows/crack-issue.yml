@@ -72,13 +72,16 @@ jobs:
           if [ "$TLIM" -gt 120 ] 2>/dev/null; then TLIM=120; fi
 
           # Map user-facing hash name to john format + openssl passwd option
+          # Ubuntu's packaged john (1.9.0, non-jumbo) uses "crypt" as the
+          # unified format name for all Linux shadow-password hash types
+          # (sha512crypt/$6$, sha256crypt/$5$, md5crypt/$1$).
           case "$HASH" in
-            sha512|sha512crypt) JOHN_FMT="sha512crypt"; SSL_OPT="-6" ;;
-            sha256|sha256crypt) JOHN_FMT="sha256crypt"; SSL_OPT="-5" ;;
-            md5|md5crypt)       JOHN_FMT="md5crypt";   SSL_OPT="-1" ;;
+            sha512|sha512crypt) JOHN_FMT="crypt"; SSL_OPT="-6" ;;
+            sha256|sha256crypt) JOHN_FMT="crypt"; SSL_OPT="-5" ;;
+            md5|md5crypt)       JOHN_FMT="crypt"; SSL_OPT="-1" ;;
             *)
               HASH="sha512crypt"
-              JOHN_FMT="sha512crypt"
+              JOHN_FMT="crypt"
               SSL_OPT="-6"
               ;;
           esac
@@ -238,7 +241,7 @@ jobs:
           TOTAL_MS=$(( END - START ))
 
           # Determine crack result
-          SHOW=$(john --show --format="$JOHN_FMT" /tmp/hash.txt 2>&1)
+          SHOW=$(john --show --format="$JOHN_FMT" /tmp/hash.txt 2>&1 || true)
           if echo "$SHOW" | grep -q "1 password hash cracked"; then
             CRACKED=true
             CRACK_METHOD="Cracked"
