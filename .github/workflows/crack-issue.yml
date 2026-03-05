@@ -236,6 +236,11 @@ jobs:
               ))
 
           # 3. Leet-speak normalisation + dictionary-word check
+          # LEET_MAP covers common character-to-letter substitutions used to
+          # disguise dictionary words.  '6' and '9' both map to 'g' (both look
+          # like lowercase g); '5' and '$' both map to 's' (both look like s).
+          # These duplicates are intentional — they cover alternative spellings
+          # (e.g. "se6urity" as well as "se9urity" both normalise to "security").
           LEET_MAP = {'@': 'a', '3': 'e', '1': 'i', '0': 'o', '5': 's',
                       '7': 't', '$': 's', '!': 'i', '4': 'a', '8': 'b',
                       '6': 'g', '9': 'g', '+': 't'}
@@ -351,7 +356,13 @@ jobs:
           if not di:
               issues.append(("No digits (0–9). Adding numbers increases the character pool.", "low"))
 
-          # 10. Word+number predictable pattern
+          # 10. Word+number predictable pattern (structural check, complementary to
+          #     leet-speak check above).  Catches passwords whose *structure* is
+          #     "letters/leet-chars followed by a short number and optional symbol"
+          #     (e.g. "fluffy99!" or "p@ssword1") regardless of whether the root
+          #     word appears in the dictionary list.  The leet-speak check above
+          #     tests whether the normalised form contains a *known word*; this
+          #     check tests the structural shape of the whole password.
           if re.search(r'^[A-Za-z@$!]+\d{1,4}[!@#$%]?$', p) and n < 16:
               issues.append(("Follows the predictable word + short-number (+ optional symbol) pattern — one of the most commonly guessed structures.", "medium"))
 
